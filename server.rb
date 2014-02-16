@@ -27,8 +27,8 @@ class Public < Sinatra::Base
 			halt 409
 			break
 		end
-		Neo.execute_query("create (user:User {login: '#{login}', id: '#{login}', password: '#{password}', email: '#{email}'})")
-		halt 201
+		Neo.execute_query("create (user:User {login: '#{login}', password: '#{password}', email: '#{email}'})")
+		status 201
 	end
 
 end
@@ -56,20 +56,37 @@ class Private < Sinatra::Base
 	
 	get "/books/:id" do |id|
 		login = env['REMOTE_USER']
-		book = Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {id: '#{id}'}) return b")
+		book = Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {bookid: '#{id}'}) optional match (b)-[:CONTAINS|FOLLOWS*]-(c:Chapter) return b.title as booktitle, c.chid as chapterid, c.title as chaptertitle")
 		if book["data"].length == 0
 			halt 404
 		end
-		book["data"][0][0]["data"].to_json
+		{
+			"title" => book["data"][0][0],
+			"chapters" => book["data"].reject { |ch| ch[1].nil? }.map { |ch| {
+				"id" => ch[1],
+				"title" => ch[2]
+			} }
+		}.to_json
+	end
+	
+	get "/books/:id/:chap" do |id, chap|
+		login = env['REMOTE_USER']
+		puts "match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {bookid: '#{id}'})-[:CONTAINS|FOLLOWS*]-(c:Chapter {chid: '#{chap}'}) return c.text as text"
+		chapter = Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {bookid: '#{id}'})-[:CONTAINS|FOLLOWS*]-(c:Chapter {chid: '#{chap}'}) return c.text as text")
+		if chapter["data"].length == 0
+			halt 404
+		end
+		chapter["data"][0][0]
 	end
 	
 	post "/books" do
 		login = env['REMOTE_USER']
 		entity = JSON.load(request.body.gets)
 		id = SecureRandom.hex(3)
-		entity["id"] = id
+		entity["bookid"] = id
 		Neo.execute_query("match (u:User {login: '#{login}'}) create (b:Book {data}), (u)-[:WROTE]->(b)", {"data"=>entity})
-		id
+		status 201
+		id.to_json
 	end
 	
 	put "/books/:id" do |id|
@@ -79,9 +96,16 @@ class Private < Sinatra::Base
 			halt 404
 		end
 		entity = JSON.load(request.body.gets)
-		entity["id"] = id
-		Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {id: '#{id}'}) set b={data}", {"data"=>entity})
-		halt 204
+		entity["bookid"] = id
+		Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {bookid: '#{id}'}) set b={data}", {"data"=>entity})
+		status 204
+	end
+	
+	put "/books/:id/:chap" do |id, chap|
+		login = env['REMOTE_USER']
+		entity = request.body.gets
+		Neo.execute_query("match (u:User {login: '#{login}'})-[:WROTE]->(b:Book {bookid: '#{id}'})-[:CONTAINS|FOLLOWS*]-(c:Chapter {chid: '#{chap}'}) set c.text={text}", {"text"=>entity})
+		status 204
 	end
 
 end
